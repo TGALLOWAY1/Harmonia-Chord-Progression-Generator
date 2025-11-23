@@ -11,10 +11,16 @@ import { useAppStore } from "@/src/store/useAppStore";
 export function useAudioEngine() {
   const synthRef = useRef<Tone.PolySynth | null>(null);
   const reverbRef = useRef<Tone.Reverb | null>(null);
+  const chorusRef = useRef<Tone.Chorus | null>(null);
+  const filterRef = useRef<Tone.Filter | null>(null);
   const audioContextInitializedRef = useRef(false);
   const scheduleIdRef = useRef<number | null>(null);
+  
+  // Ref to track the playback index independently of the React state
+  // This decouples the audio lookahead from the visual state update
+  const playbackIndexRef = useRef(0);
 
-  const { isPlaying, bpm, progression, currentChordIndex, nextChord } = useAppStore();
+  const { isPlaying, bpm, progression, setCurrentChordIndex } = useAppStore();
 
   // Initialize audio context on first user interaction
   useEffect(() => {
@@ -52,34 +58,77 @@ export function useAudioEngine() {
     };
   }, []);
 
-  // Initialize synth and reverb - only once on mount
+  // Initialize synth, reverb, and chorus - only once on mount
   useEffect(() => {
     // Only create if not already initialized
     if (synthRef.current || reverbRef.current) return;
 
-    // Create reverb
-    const reverb = new Tone.Reverb(0.5).toDestination();
+    // Create Reverb: Decay 2.5s, Wetness 0.4 (adds space)
+    const reverb = new Tone.Reverb({
+      decay: 2.5,
+      wet: 0.4
+    }).toDestination();
 
-    // Create PolySynth with AMSynth
-    const synth = new Tone.PolySynth(Tone.AMSynth, {
-      volume: -10, // Low volume to avoid jarring sounds
-      oscillator: {
-        type: "triangle",
-      },
+    // Create Chorus: Wetness 0.3, Frequency 4hz (adds width)
+    const chorus = new Tone.Chorus({
+      frequency: 4,
+      delay: 2.5,
+      depth: 0.5,
+      wet: 0.3
     }).connect(reverb);
+    
+    // Create Filter: Low-pass at 2000Hz (removes harsh highs)
+    const filter = new Tone.Filter(2000, "lowpass").connect(chorus);
 
-    // Store in refs so they persist between renders
+    // Create PolySynth with FMSynth for softer, dreamier texture
+    const synth = new Tone.PolySynth(Tone.FMSynth, {
+      volume: -10,
+      harmonicity: 3,
+      modulationIndex: 3.5,
+      oscillator: {
+        type: "fatsawtooth",
+        count: 3,
+        spread: 30
+      },
+      envelope: {
+        attack: 0.1,
+        decay: 0.2,
+        sustain: 0.8,
+        release: 1.5
+      },
+      modulation: {
+        type: "triangle"
+      },
+      modulationEnvelope: {
+        attack: 0.5,
+        decay: 0.1,
+        sustain: 1,
+        release: 0.5
+      }
+    }).connect(filter);
+
+    // Store in refs
     synthRef.current = synth;
     reverbRef.current = reverb;
+    chorusRef.current = chorus;
+    filterRef.current = filter;
 
     // Generate reverb impulse response
     reverb.generate();
 
-    // Cleanup function - dispose synth and reverb on unmount
+    // Cleanup function
     return () => {
       if (synthRef.current) {
         synthRef.current.dispose();
         synthRef.current = null;
+      }
+      if (filterRef.current) {
+        filterRef.current.dispose();
+        filterRef.current = null;
+      }
+      if (chorusRef.current) {
+        chorusRef.current.dispose();
+        chorusRef.current = null;
       }
       if (reverbRef.current) {
         reverbRef.current.dispose();
@@ -88,14 +137,14 @@ export function useAudioEngine() {
     };
   }, []);
 
-  // Sync BPM with Transport
+  // Sync BPM
   useEffect(() => {
     if (Tone.Transport.bpm.value !== bpm) {
       Tone.Transport.bpm.value = bpm;
     }
   }, [bpm]);
 
-  // Schedule Transport loop and sync playback state
+  // Schedule Transport loop
   useEffect(() => {
     // Clear any existing schedule
     if (scheduleIdRef.current !== null) {
@@ -105,6 +154,8 @@ export function useAudioEngine() {
     // Stop transport if not playing
     if (!isPlaying) {
       Tone.Transport.stop();
+      // Reset internal index when stopping so we restart from 0
+      playbackIndexRef.current = 0;
       return;
     }
 
@@ -118,21 +169,35 @@ export function useAudioEngine() {
         const currentState = useAppStore.getState();
         if (currentState.progression.length === 0) return;
 
-        // Get current chord based on currentChordIndex from store
-        const currentChord = currentState.progression[currentState.currentChordIndex];
+        // Use internal ref index to determine which chord to play
+        // This index advances independently of the store state to handle lookahead
+        const currentIndex = playbackIndexRef.current;
+        const currentChord = currentState.progression[currentIndex];
+        
         if (!currentChord || !currentChord.notes || currentChord.notes.length === 0) return;
 
-        // Release any currently playing notes
+        // Release previous notes
         synth.releaseAll(time);
         
-        // Trigger all notes of the current chord
-        synth.triggerAttack(currentChord.notes, time);
+        // Humanize timing
+        const humanizeOffset = (Math.random() * 0.05) - 0.02;
+        const triggerTime = time + 0.05 + humanizeOffset;
         
-        // Advance to next chord for the next iteration
-        currentState.nextChord();
+        // Trigger audio
+        synth.triggerAttack(currentChord.notes, triggerTime);
+        
+        // Schedule visual update using Tone.Draw
+        // This ensures the React state updates exactly when the audio starts (or close to it),
+        // ignoring the lookahead latency of the Transport callback
+        Tone.Draw.schedule(() => {
+          setCurrentChordIndex(currentIndex);
+        }, time);
+        
+        // Advance internal index for the NEXT loop iteration
+        playbackIndexRef.current = (currentIndex + 1) % 4;
       },
-      "1n", // Repeat every whole note
-      0 // Start immediately
+      "1n",
+      0
     );
 
     scheduleIdRef.current = scheduleId;
@@ -145,47 +210,39 @@ export function useAudioEngine() {
     return () => {
       Tone.Transport.clear(scheduleId);
     };
-  }, [isPlaying, progression]);
+  }, [isPlaying, progression]); // Re-schedule if progression changes
 
-  // Handle Transport start/stop based on isPlaying and audio context state
+  // Handle Transport start/stop and cleanup
   useEffect(() => {
     if (isPlaying && Tone.context.state === "running") {
       Tone.Transport.start();
     } else {
       Tone.Transport.stop();
-      // Immediately release all notes when stopping/pausing
       if (synthRef.current) {
         synthRef.current.releaseAll();
       }
+      // Reset ref on pause/stop
+      playbackIndexRef.current = 0;
     }
   }, [isPlaying]);
 
-  // Cleanup on unmount - ensure everything is stopped and disposed
+  // Final cleanup
   useEffect(() => {
     return () => {
-      // Stop and cancel Transport
       Tone.Transport.stop();
       Tone.Transport.cancel();
       
-      // Clear any scheduled events
       if (scheduleIdRef.current !== null) {
         Tone.Transport.clear(scheduleIdRef.current);
-        scheduleIdRef.current = null;
       }
       
-      // Release all notes and dispose synth
       if (synthRef.current) {
         synthRef.current.releaseAll();
         synthRef.current.dispose();
-        synthRef.current = null;
       }
-      
-      // Dispose reverb
-      if (reverbRef.current) {
-        reverbRef.current.dispose();
-        reverbRef.current = null;
-      }
+      if (filterRef.current) filterRef.current.dispose();
+      if (chorusRef.current) chorusRef.current.dispose();
+      if (reverbRef.current) reverbRef.current.dispose();
     };
   }, []);
 }
-

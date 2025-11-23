@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { ChordObject, generateDMinorProgression } from "@/src/lib/theory";
+import { ChordObject, generateProgression, Mood, ScaleMode, ComplexityLevel } from "@/src/lib/theory";
 
 interface AppState {
   // State
@@ -7,11 +7,20 @@ interface AppState {
   bpm: number;
   progression: ChordObject[];
   currentChordIndex: number;
+  mood: Mood;
+  rootNote: string;
+  scaleMode: ScaleMode;
+  complexity: ComplexityLevel;
 
   // Actions
   togglePlay: () => void;
   setBpm: (bpm: number) => void;
+  setMood: (mood: Mood) => void;
+  setRootNote: (root: string) => void;
+  setScaleMode: (mode: ScaleMode) => void;
+  setComplexity: (complexity: ComplexityLevel) => void;
   generateNewProgression: () => void;
+  setCurrentChordIndex: (index: number) => void;
   nextChord: () => void;
 }
 
@@ -21,6 +30,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   bpm: 120,
   progression: [],
   currentChordIndex: 0,
+  mood: "neutral",
+  rootNote: "D",
+  scaleMode: "minor",
+  complexity: 1, // Default to Standard (7ths)
 
   // Actions
   togglePlay: () => {
@@ -38,18 +51,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ bpm });
   },
 
+  setMood: (mood: Mood) => {
+    set({ mood });
+    get().generateNewProgression();
+  },
+
+  setRootNote: (root: string) => {
+    set({ rootNote: root });
+    get().generateNewProgression();
+  },
+
+  setScaleMode: (mode: ScaleMode) => {
+    set({ scaleMode: mode });
+    get().generateNewProgression();
+  },
+
+  setComplexity: (complexity: ComplexityLevel) => {
+    set({ complexity });
+    get().generateNewProgression();
+  },
+
   generateNewProgression: () => {
-    const newProgression = generateDMinorProgression();
+    const { mood, rootNote, scaleMode, complexity } = get();
+    const newProgression = generateProgression(rootNote, scaleMode, mood, complexity);
     set({
       progression: newProgression,
-      currentChordIndex: 0, // Reset to first chord when generating new progression
+      currentChordIndex: 0,
     });
+  },
+
+  setCurrentChordIndex: (index: number) => {
+    set({ currentChordIndex: index });
   },
 
   nextChord: () => {
     set((state) => ({
-      currentChordIndex: (state.currentChordIndex + 1) % 4, // Loop back to 0 after 3
+      currentChordIndex: (state.currentChordIndex + 1) % 4,
     }));
   },
 }));
-
