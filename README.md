@@ -1,6 +1,9 @@
 # Harmonia
 
-A minimal chord progression generator for D Minor (Aeolian) with a Scandinavian Minimalism aesthetic.
+A minimal chord progression generator with a Scandinavian Minimalism aesthetic.
+
+<img width="1189" height="819" alt="image" src="https://github.com/user-attachments/assets/09480882-bc66-4fa4-a118-ba20fb31dba4" />
+
 
 ## Tech Stack
 
