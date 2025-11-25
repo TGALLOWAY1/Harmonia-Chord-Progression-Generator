@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { ChordObject, generateProgression, Mood, ScaleMode, ComplexityLevel } from "@/src/lib/theory";
+import { Chord as TonalChord } from "@tonaljs/tonal";
+import { ChordObject, generateProgression, applyVoicing, Mood, ScaleMode, ComplexityLevel } from "@/src/lib/theory";
 
 interface AppState {
   // State
@@ -11,6 +12,7 @@ interface AppState {
   rootNote: string;
   scaleMode: ScaleMode;
   complexity: ComplexityLevel;
+  lockedChords: boolean[];
 
   // Actions
   togglePlay: () => void;
@@ -22,6 +24,10 @@ interface AppState {
   generateNewProgression: () => void;
   setCurrentChordIndex: (index: number) => void;
   nextChord: () => void;
+  toggleChordLock: (index: number) => void;
+  setChordLocked: (index: number, value: boolean) => void;
+  isChordLocked: (index: number) => boolean;
+  regenerateChordAtIndex: (index: number) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -34,6 +40,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   rootNote: "D",
   scaleMode: "minor",
   complexity: 1, // Default to Standard (7ths)
+  lockedChords: [false, false, false, false],
 
   // Actions
   togglePlay: () => {
@@ -72,10 +79,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   generateNewProgression: () => {
-    const { mood, rootNote, scaleMode, complexity } = get();
+    const { mood, rootNote, scaleMode, complexity, progression, lockedChords } = get();
     const newProgression = generateProgression(rootNote, scaleMode, mood, complexity);
+    
+    // Merge: keep locked chords, use new ones for unlocked positions
+    const mergedProgression: ChordObject[] = [];
+    for (let i = 0; i < 4; i++) {
+      if (lockedChords[i] && progression[i]) {
+        // Keep locked chord
+        mergedProgression.push(progression[i]);
+      } else {
+        // Use new chord
+        mergedProgression.push(newProgression[i]);
+      }
+    }
+    
+    // Re-voice the entire progression sequentially to maintain voice-leading
+    const revoicedProgression: ChordObject[] = [];
+    let previousNotes: string[] | undefined;
+    for (let i = 0; i < mergedProgression.length; i++) {
+      const chord = mergedProgression[i];
+      // Get the base notes from the chord symbol (without voicing)
+      const baseChord = TonalChord.get(chord.symbol);
+      const baseNotes = baseChord.notes || [];
+      // Re-apply voicing with previous notes for voice-leading
+      const voicedNotes = applyVoicing(baseNotes, "open", previousNotes);
+      revoicedProgression.push({
+        ...chord,
+        notes: voicedNotes,
+      });
+      previousNotes = voicedNotes;
+    }
+    
     set({
-      progression: newProgression,
+      progression: revoicedProgression,
       currentChordIndex: 0,
     });
   },
@@ -88,5 +125,64 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       currentChordIndex: (state.currentChordIndex + 1) % 4,
     }));
+  },
+
+  toggleChordLock: (index: number) => {
+    if (index < 0 || index >= 4) return;
+    set((state) => {
+      const newLocked = [...state.lockedChords];
+      newLocked[index] = !newLocked[index];
+      return { lockedChords: newLocked };
+    });
+  },
+
+  setChordLocked: (index: number, value: boolean) => {
+    if (index < 0 || index >= 4) return;
+    set((state) => {
+      const newLocked = [...state.lockedChords];
+      newLocked[index] = value;
+      return { lockedChords: newLocked };
+    });
+  },
+
+  isChordLocked: (index: number) => {
+    const { lockedChords } = get();
+    return index >= 0 && index < 4 ? lockedChords[index] : false;
+  },
+
+  regenerateChordAtIndex: (index: number) => {
+    if (index < 0 || index >= 4) return;
+    const { mood, rootNote, scaleMode, complexity, progression, lockedChords } = get();
+    
+    // Don't regenerate if locked
+    if (lockedChords[index]) return;
+    
+    // Generate a new full progression (Markov engine will use context)
+    const newProgression = generateProgression(rootNote, scaleMode, mood, complexity);
+    
+    // Only replace the chord at the target index
+    const updatedProgression = [...progression];
+    updatedProgression[index] = newProgression[index];
+    
+    // Re-voice the entire progression sequentially to maintain voice-leading
+    const revoicedProgression: ChordObject[] = [];
+    let previousNotes: string[] | undefined;
+    for (let i = 0; i < updatedProgression.length; i++) {
+      const chord = updatedProgression[i];
+      // Get the base notes from the chord symbol (without voicing)
+      const baseChord = TonalChord.get(chord.symbol);
+      const baseNotes = baseChord.notes || [];
+      // Re-apply voicing with previous notes for voice-leading
+      const voicedNotes = applyVoicing(baseNotes, "open", previousNotes);
+      revoicedProgression.push({
+        ...chord,
+        notes: voicedNotes,
+      });
+      previousNotes = voicedNotes;
+    }
+    
+    set({
+      progression: revoicedProgression,
+    });
   },
 }));
