@@ -4,6 +4,18 @@ import { useEffect, useRef } from "react";
 import * as Tone from "tone";
 import { useAppStore } from "@/src/store/useAppStore";
 
+// Module-level ref to store the playFromIndex function so it can be accessed from outside the hook
+let playFromIndexRef: ((index: number) => void) | null = null;
+
+/**
+ * Get the playFromIndex function (for use outside the hook)
+ */
+export function playFromIndex(index: number) {
+  if (playFromIndexRef) {
+    playFromIndexRef(index);
+  }
+}
+
 /**
  * Custom hook to manage Tone.js audio engine
  * Handles PolySynth, Reverb, Transport scheduling, and audio context initialization
@@ -144,19 +156,12 @@ export function useAudioEngine() {
     }
   }, [bpm]);
 
-  // Schedule Transport loop
-  useEffect(() => {
+  // Function to create/update the transport schedule
+  const createSchedule = () => {
     // Clear any existing schedule
     if (scheduleIdRef.current !== null) {
       Tone.Transport.clear(scheduleIdRef.current);
-    }
-
-    // Stop transport if not playing
-    if (!isPlaying) {
-      Tone.Transport.stop();
-      // Reset internal index when stopping so we restart from 0
-      playbackIndexRef.current = 0;
-      return;
+      scheduleIdRef.current = null;
     }
 
     // Schedule loop that triggers every whole note ("1n")
@@ -201,6 +206,25 @@ export function useAudioEngine() {
     );
 
     scheduleIdRef.current = scheduleId;
+  };
+
+  // Schedule Transport loop
+  useEffect(() => {
+    // Stop transport if not playing
+    if (!isPlaying) {
+      // Clear schedule
+      if (scheduleIdRef.current !== null) {
+        Tone.Transport.clear(scheduleIdRef.current);
+        scheduleIdRef.current = null;
+      }
+      Tone.Transport.stop();
+      // Reset internal index when stopping so we restart from 0
+      playbackIndexRef.current = 0;
+      return;
+    }
+
+    // Create the schedule
+    createSchedule();
 
     // Start transport if playing
     if (isPlaying && Tone.context.state === "running") {
@@ -208,7 +232,9 @@ export function useAudioEngine() {
     }
 
     return () => {
-      Tone.Transport.clear(scheduleId);
+      if (scheduleIdRef.current !== null) {
+        Tone.Transport.clear(scheduleIdRef.current);
+      }
     };
   }, [isPlaying, progression]); // Re-schedule if progression changes
 
@@ -225,6 +251,67 @@ export function useAudioEngine() {
       playbackIndexRef.current = 0;
     }
   }, [isPlaying]);
+
+  // Implement playFromIndex function
+  useEffect(() => {
+    const playFromIndexImpl = (index: number) => {
+      // Wrap index to 0-3 range
+      const wrappedIndex = ((index % 4) + 4) % 4;
+      
+      // Stop transport
+      Tone.Transport.stop();
+      
+      // Release any currently playing notes
+      if (synthRef.current) {
+        synthRef.current.releaseAll();
+      }
+      
+      // Set the playback index
+      playbackIndexRef.current = wrappedIndex;
+      
+      // Update store index for UI highlighting
+      setCurrentChordIndex(wrappedIndex);
+      
+      // Ensure audio context is started
+      if (Tone.context.state !== "running") {
+        Tone.start();
+      }
+      
+      // Get current state
+      const state = useAppStore.getState();
+      
+      // Recreate the schedule with the new index
+      createSchedule();
+      
+      // If not playing, start playback (this will trigger the schedule effect)
+      if (!state.isPlaying) {
+        useAppStore.setState({ isPlaying: true });
+      }
+      
+      // Immediately play the chord at the target index
+      if (synthRef.current && state.progression[wrappedIndex]) {
+        const chord = state.progression[wrappedIndex];
+        if (chord && chord.notes && chord.notes.length > 0) {
+          // Play immediately (at current time + small offset)
+          const now = Tone.now();
+          synthRef.current.triggerAttack(chord.notes, now + 0.01);
+        }
+      }
+      
+      // Start transport
+      if (Tone.context.state === "running") {
+        Tone.Transport.start();
+      }
+    };
+    
+    // Store the function in module-level ref
+    playFromIndexRef = playFromIndexImpl;
+    
+    // Cleanup: clear the ref when component unmounts
+    return () => {
+      playFromIndexRef = null;
+    };
+  }, [setCurrentChordIndex]);
 
   // Final cleanup
   useEffect(() => {
@@ -243,6 +330,9 @@ export function useAudioEngine() {
       if (filterRef.current) filterRef.current.dispose();
       if (chorusRef.current) chorusRef.current.dispose();
       if (reverbRef.current) reverbRef.current.dispose();
+      
+      // Clear the module-level ref
+      playFromIndexRef = null;
     };
   }, []);
 }

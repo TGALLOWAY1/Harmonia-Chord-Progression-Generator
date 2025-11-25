@@ -5,7 +5,7 @@ import ChordCard from "./ChordCard";
 import { AnimatePresence, motion } from "framer-motion";
 
 export default function Timeline() {
-  const { progression, currentChordIndex, isPlaying } = useAppStore();
+  const { progression, currentChordIndex, isPlaying, isChordLocked } = useAppStore();
 
   // Ensure we always show 4 cards, even if progression is empty
   const displayProgression = progression.length > 0 
@@ -40,7 +40,10 @@ export default function Timeline() {
                   <ChordCard
                     chordName={chord.symbol}
                     romanNumeral={chord.roman}
+                    notes={chord.notes}
                     isActive={isPlaying && currentChordIndex === index}
+                    index={index}
+                    isLocked={isChordLocked(index)}
                   />
                 ) : (
                   <div
