@@ -130,16 +130,18 @@ const ROMAN_INDEX: Record<string, number> = {
  * @param mode Scale mode ("major" or "minor")
  * @param mood The mood to bias the chord selection (default: "neutral")
  * @param complexity Complexity level 0-3 (default: 1)
+ * @param depthOverride Optional explicit harmonic depth to forward to the harmony engine
  */
 export function generateProgression(
   root: string = "D", 
   mode: ScaleMode = "minor", 
   mood: Mood = "neutral",
-  complexity: ComplexityLevel = 1
+  complexity: ComplexityLevel = 1,
+  depthOverride?: HarmonyDepth
 ): ChordObject[] {
   const harmonyMode = mapScaleMode(mode);
   const harmonyMood = mapMood(mood);
-  const depth = mapComplexityToDepth(complexity);
+  const depth = depthOverride ?? mapComplexityToDepth(complexity);
 
   const generated = generateHarmonyProgression({
     rootKey: root,
@@ -155,7 +157,7 @@ export function generateProgression(
 }
 
 export function generateDMinorProgression(mood: Mood = "neutral"): ChordObject[] {
-  return generateProgression("D", "minor", mood, 1);
+  return generateProgression("D", "minor", mood, 1, 1);
 }
 
 function buildChordObject(
@@ -213,7 +215,7 @@ function mapMood(mood: Mood): HarmonyMood {
 }
 
 function mapComplexityToDepth(complexity: ComplexityLevel): HarmonyDepth {
-  // Temporary bridge: map UI complexity slider to harmony engine depth until the store understands depth directly.
+  // Backstop bridge for call sites that still pass complexity.
   if (complexity <= 0) return 0;
   if (complexity === 1) return 1;
   return 2;
