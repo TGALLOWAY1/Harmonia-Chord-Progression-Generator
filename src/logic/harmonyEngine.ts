@@ -263,3 +263,81 @@ if (process.env.NODE_ENV === "development") {
   console.debug("[harmonyEngine] Sampled transitions:", counts);
 }
 
+type DegreeFlavor = "major" | "minor" | "diminished";
+
+const QUALITY_BY_FLAVOR: Record<DegreeFlavor, Record<Depth, ChordQuality>> = {
+  major: {
+    0: "",
+    1: "maj7",
+    2: "maj(add9)",
+  },
+  minor: {
+    0: "m",
+    1: "m7",
+    2: "m(add9)",
+  },
+  diminished: {
+    0: "dim",
+    1: "dim",
+    2: "dim",
+  },
+};
+
+export function generateProgression(params: {
+  rootKey: string;
+  mode: Mode;
+  mood: Mood;
+  depth: Depth;
+  numChords: number;
+}): GeneratedChord[] {
+  const { mode, mood, depth, numChords } = params;
+
+  if (numChords <= 0) {
+    return [];
+  }
+
+  const profile = getMoodProfile(mood);
+  const applicableDepth =
+    profile.depthMapping[depth]?.length && profile.depthMapping[depth]!.length > 0
+      ? depth
+      : 0;
+
+  const tonic = getTonicForMode(mode);
+  const chords: GeneratedChord[] = [];
+  let currentDegree = tonic;
+
+  for (let i = 0; i < numChords; i++) {
+    if (i > 0) {
+      currentDegree = sampleNextDegree(currentDegree, profile);
+    }
+
+    const quality = pickQuality(currentDegree, applicableDepth, profile);
+    chords.push({ degree: currentDegree, quality });
+  }
+
+  return chords;
+}
+
+function getTonicForMode(mode: Mode): Degree {
+  return MODE_TONICS[mode] ?? "I";
+}
+
+function pickQuality(
+  degree: Degree,
+  depth: Depth,
+  profile: MoodProfile
+): ChordQuality {
+  const flavor = getDegreeFlavor(degree);
+  const preferred = QUALITY_BY_FLAVOR[flavor][depth];
+  const fallbackPool = profile.depthMapping[depth] ?? DEPTH_MAPPING[0];
+  return fallbackPool.includes(preferred)
+    ? preferred
+    : fallbackPool[0] ?? QUALITY_BY_FLAVOR[flavor][0];
+}
+
+function getDegreeFlavor(degree: Degree): DegreeFlavor {
+  if (degree.includes("°")) return "diminished";
+  const stripped = degree.replace(/^b/, "");
+  return stripped === stripped.toUpperCase() ? "major" : "minor";
+}
+
