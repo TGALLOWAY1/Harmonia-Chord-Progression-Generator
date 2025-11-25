@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import { ChordObject, generateProgression, Mood, ScaleMode, ComplexityLevel } from "@/src/lib/theory";
+import { Depth } from "@/src/logic/harmonyEngine";
+
+function complexityToDepth(complexity: number): Depth {
+  if (complexity <= 0) return 0;
+  if (complexity === 1) return 1;
+  return 2;
+}
 
 interface AppState {
   // State
@@ -10,6 +17,8 @@ interface AppState {
   mood: Mood;
   rootNote: string;
   scaleMode: ScaleMode;
+  // NOTE: complexity is currently an alias for harmonic Depth (0–2) as defined in the Harmonia v2.1 spec:
+  // 0: triads, 1: diatonic 7ths, 2: atmospheric sus/add9.
   complexity: ComplexityLevel;
 
   // Actions
@@ -73,7 +82,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   generateNewProgression: () => {
     const { mood, rootNote, scaleMode, complexity } = get();
-    const newProgression = generateProgression(rootNote, scaleMode, mood, complexity);
+    const depth = complexityToDepth(complexity);
+    const newProgression = generateProgression(rootNote, scaleMode, mood, complexity, depth);
     set({
       progression: newProgression,
       currentChordIndex: 0,
