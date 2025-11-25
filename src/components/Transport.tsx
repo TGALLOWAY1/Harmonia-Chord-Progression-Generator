@@ -1,11 +1,34 @@
 "use client";
 
 import { Play, Pause } from "lucide-react";
+import { useCallback } from "react";
 import { useAppStore } from "@/src/store/useAppStore";
+import { progressionToMidi } from "@/src/lib/midiExport";
 
 export default function Transport() {
   const { isPlaying, bpm, togglePlay, setBpm, generateNewProgression } =
     useAppStore();
+
+  const handleExport = useCallback(() => {
+    const { progression, bpm: currentBpm } = useAppStore.getState();
+    if (!progression.length) return;
+
+    const blob = progressionToMidi(progression, currentBpm);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "harmonia-progression.mid";
+    anchor.click();
+    URL.revokeObjectURL(url);
+
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[Harmonia] Exported MIDI",
+        progression.map((chord) => ({ chord: chord.symbol, notes: chord.notes })),
+        { bpm: currentBpm }
+      );
+    }
+  }, []);
 
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-6 py-4">
@@ -59,20 +82,37 @@ export default function Transport() {
           </span>
         </div>
 
-        {/* Regenerate Button */}
-        <button
-          onClick={generateNewProgression}
-          className="
-            rounded-full px-6 py-3
-            border border-stone-300
-            bg-white
-            transition-colors duration-200
-            hover:bg-stone-50
-            active:bg-stone-100
-          "
-        >
-          <span className="text-stone-700 font-medium">Regenerate</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Regenerate Button */}
+          <button
+            onClick={generateNewProgression}
+            className="
+              rounded-full px-6 py-3
+              border border-stone-300
+              bg-white
+              transition-colors duration-200
+              hover:bg-stone-50
+              active:bg-stone-100
+            "
+          >
+            <span className="text-stone-700 font-medium">Regenerate</span>
+          </button>
+
+          {/* Export MIDI Button */}
+          <button
+            onClick={handleExport}
+            className="
+              rounded-full px-6 py-3
+              border border-stone-300
+              bg-white
+              transition-colors duration-200
+              hover:bg-stone-50
+              active:bg-stone-100
+            "
+          >
+            <span className="text-stone-700 font-medium">Export MIDI</span>
+          </button>
+        </div>
       </div>
     </div>
   );
