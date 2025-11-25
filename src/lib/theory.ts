@@ -1,18 +1,16 @@
-import { Chord as TonalChord, Scale, Note, Key } from "@tonaljs/tonal";
+import { Chord as TonalChord, Interval, Note } from "@tonaljs/tonal";
+import {
+  generateProgression as generateHarmonyProgression,
+  Mode as HarmonyMode,
+  Mood as HarmonyMood,
+  Depth as HarmonyDepth,
+  Degree,
+  GeneratedChord,
+} from "@/src/logic/harmonyEngine";
 
 export type Mood = "happy" | "sad" | "dark" | "hopeful" | "neutral";
 export type ScaleMode = "major" | "minor";
 export type ComplexityLevel = 0 | 1 | 2 | 3;
-
-// Weights for scale degrees (1-7) based on mood
-// Higher number = higher probability of being selected
-const MOOD_WEIGHTS: Record<Mood, Record<number, number>> = {
-  neutral: { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1 },
-  sad: { 1: 5, 2: 1, 3: 1, 4: 4, 5: 2, 6: 4, 7: 1 }, // i, iv, VI
-  happy: { 1: 1, 2: 1, 3: 5, 4: 2, 5: 4, 6: 3, 7: 5 }, // III, v, VI, VII
-  dark: { 1: 5, 2: 4, 3: 1, 4: 3, 5: 3, 6: 1, 7: 1 }, // i, ii°, iv, v
-  hopeful: { 1: 2, 2: 1, 3: 3, 4: 2, 5: 2, 6: 5, 7: 4 }, // VI, VII, III
-};
 
 export type ChordObject = {
   symbol: string;
@@ -81,87 +79,50 @@ export function applyVoicing(notes: string[], strategy: VoicingStrategy = 'open'
   return notes; // Fallback
 }
 
-/**
- * Helper function to select a random item based on weights
- */
-function getWeightedRandomIndex(weights: Record<number, number>, maxIndex: number): number {
-  const items = Array.from({ length: maxIndex }, (_, i) => i);
-  const totalWeight = items.reduce((sum, index) => {
-    const degree = index + 1;
-    return sum + (weights[degree] || 1);
-  }, 0);
+const SCALE_MODE_TO_ENGINE_MODE: Record<ScaleMode, HarmonyMode> = {
+  major: "ionian",
+  minor: "aeolian",
+};
 
-  let random = Math.random() * totalWeight;
-  
-  for (let i = 0; i < items.length; i++) {
-    const degree = i + 1;
-    const weight = weights[degree] || 1;
-    if (random < weight) {
-      return i;
-    }
-    random -= weight;
-  }
-  
-  return items[items.length - 1];
-}
+const MOOD_TO_ENGINE_MOOD: Record<Mood, HarmonyMood> = {
+  happy: "happy",
+  sad: "melancholic",
+  dark: "dark",
+  hopeful: "optimistic",
+  neutral: "moody",
+};
 
-/**
- * Modify chord symbol based on complexity level
- */
-function getComplexChordSymbol(baseSymbol: string, complexity: ComplexityLevel): string {
-  const chord = TonalChord.get(baseSymbol);
-  const tonic = chord.tonic;
-  const type = chord.type; // "major", "minor", "diminished"
-  
-  if (!tonic) return baseSymbol;
+const QUALITY_SYMBOL_MAP: Record<string, string> = {
+  "": "",
+  m: "m",
+  dim: "dim",
+  maj7: "maj7",
+  m7: "m7",
+  "7": "7",
+  sus2: "sus2",
+  sus4: "sus4",
+  add9: "add9",
+  "m(add9)": "madd9",
+  "maj(add9)": "maj9",
+};
 
-  // 0: Triads
-  if (complexity === 0) {
-    // Strip 7ths and extensions
-    if (baseSymbol.includes("maj7")) return baseSymbol.replace("maj7", "");
-    if (baseSymbol.includes("m7")) return baseSymbol.replace("m7", "m");
-    if (baseSymbol.includes("7")) return baseSymbol.replace("7", "");
-    // Simple diminished logic
-    if (baseSymbol.includes("dim7")) return baseSymbol.replace("dim7", "dim");
-    return baseSymbol;
-  }
+const MODE_DEGREE_OFFSETS: Record<HarmonyMode, number[]> = {
+  ionian: [0, 2, 4, 5, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  aeolian: [0, 2, 3, 5, 7, 8, 10],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  phrygian: [0, 1, 3, 5, 7, 8, 10],
+};
 
-  // 1: Basic 7ths (already default in our logic)
-  if (complexity === 1) {
-    return baseSymbol;
-  }
-
-  // 2: Color Tones (Add9, Sus4)
-  if (complexity === 2) {
-    const isMajor = baseSymbol.includes("maj7") || (!baseSymbol.includes("m") && !baseSymbol.includes("dim"));
-    const isMinor = baseSymbol.includes("m7");
-    
-    if (Math.random() > 0.5) {
-       if (isMajor) return `${tonic}maj9`;
-       if (isMinor) return `${tonic}m9`;
-    } else {
-       if (isMajor) return `${tonic}add9`;
-       if (isMinor) return `${tonic}madd9`;
-    }
-    return baseSymbol;
-  }
-
-  // 3: Extensions (9, 11, 13)
-  if (complexity === 3) {
-    const isMajor = baseSymbol.includes("maj7");
-    const isMinor = baseSymbol.includes("m7");
-    const isDom = !isMajor && !isMinor && baseSymbol.includes("7"); // Dominant 7
-
-    if (isMajor) return `${tonic}maj13`;
-    if (isMinor) return `${tonic}m11`;
-    if (isDom) return `${tonic}13`;
-    
-    // Fallback
-    return baseSymbol;
-  }
-
-  return baseSymbol;
-}
+const ROMAN_INDEX: Record<string, number> = {
+  I: 0,
+  II: 1,
+  III: 2,
+  IV: 3,
+  V: 4,
+  VI: 5,
+  VII: 6,
+};
 
 /**
  * Generate a random 4-chord progression dynamically based on key, mood, and complexity
@@ -176,45 +137,84 @@ export function generateProgression(
   mood: Mood = "neutral",
   complexity: ComplexityLevel = 1
 ): ChordObject[] {
-  const progression: ChordObject[] = [];
-  const currentWeights = MOOD_WEIGHTS[mood];
-  
-  // Get scale chords using Tonal.js Key module
-  // Start with basic 7ths as base
-  const keyChords = mode === "major" 
-    ? Key.majorKey(root).chords 
-    : Key.minorKey(root).natural.chords;
-    
-  const grades = mode === "major"
-    ? Key.majorKey(root).grades
-    : Key.minorKey(root).natural.grades;
+  const harmonyMode = mapScaleMode(mode);
+  const harmonyMood = mapMood(mood);
+  const depth = mapComplexityToDepth(complexity);
 
-  // Select 4 chords from the scale based on mood weights
-  for (let i = 0; i < 4; i++) {
-    const randomIndex = getWeightedRandomIndex(currentWeights, keyChords.length);
-    let chordSymbol = keyChords[randomIndex];
-    const romanNumeral = grades[randomIndex];
-    
-    // Apply complexity logic to modify symbol
-    chordSymbol = getComplexChordSymbol(chordSymbol, complexity);
-    
-    // Get detailed chord info
-    const chord = TonalChord.get(chordSymbol);
-    const chordNotes = chord.notes || [];
-    
-    // Apply 'open' voicing strategy
-    const voicedNotes = applyVoicing(chordNotes, 'open');
-    
-    progression.push({
-      symbol: chordSymbol,
-      notes: voicedNotes,
-      roman: romanNumeral,
-    });
-  }
-  
-  return progression;
+  const generated = generateHarmonyProgression({
+    rootKey: root,
+    mode: harmonyMode,
+    mood: harmonyMood,
+    depth,
+    numChords: 4,
+  });
+
+  return generated.map((generatedChord) =>
+    buildChordObject(root, harmonyMode, generatedChord)
+  );
 }
 
 export function generateDMinorProgression(mood: Mood = "neutral"): ChordObject[] {
   return generateProgression("D", "minor", mood, 1);
+}
+
+function buildChordObject(
+  root: string,
+  harmonyMode: HarmonyMode,
+  generatedChord: GeneratedChord
+): ChordObject {
+  const chordSymbol = convertToChordSymbol(root, harmonyMode, generatedChord);
+  const chord = TonalChord.get(chordSymbol);
+  const chordNotes = chord.notes || [];
+  const voicedNotes = applyVoicing(chordNotes, "open");
+
+  return {
+    symbol: chordSymbol,
+    notes: voicedNotes,
+    roman: generatedChord.degree,
+  };
+}
+
+function convertToChordSymbol(
+  root: string,
+  mode: HarmonyMode,
+  generatedChord: GeneratedChord
+): string {
+  const degreeRoot = getDegreeRoot(root, mode, generatedChord.degree);
+  const mappedQuality = QUALITY_SYMBOL_MAP[generatedChord.quality] ?? "";
+  return `${degreeRoot}${mappedQuality}`;
+}
+
+function getDegreeRoot(root: string, mode: HarmonyMode, degree: Degree): string {
+  const semitoneOffset = getDegreeOffset(mode, degree);
+  const interval = Interval.fromSemitones(semitoneOffset);
+  if (!interval) return root;
+  const transposed = Note.transpose(root, interval);
+  return transposed ?? root;
+}
+
+function getDegreeOffset(mode: HarmonyMode, degree: Degree): number {
+  const flats = (degree.match(/b/g) ?? []).length;
+  const sharps = (degree.match(/#/g) ?? []).length;
+  const normalizedNumeral = degree.replace(/[b#°]/g, "").toUpperCase();
+  const index = ROMAN_INDEX[normalizedNumeral] ?? 0;
+  const offsets = MODE_DEGREE_OFFSETS[mode] ?? MODE_DEGREE_OFFSETS.ionian;
+  const base = offsets[index] ?? 0;
+  const offset = (base - flats + sharps) % 12;
+  return offset < 0 ? offset + 12 : offset;
+}
+
+function mapScaleMode(mode: ScaleMode): HarmonyMode {
+  return SCALE_MODE_TO_ENGINE_MODE[mode] ?? "aeolian";
+}
+
+function mapMood(mood: Mood): HarmonyMood {
+  return MOOD_TO_ENGINE_MOOD[mood] ?? "moody";
+}
+
+function mapComplexityToDepth(complexity: ComplexityLevel): HarmonyDepth {
+  // Temporary bridge: map UI complexity slider to harmony engine depth until the store understands depth directly.
+  if (complexity <= 0) return 0;
+  if (complexity === 1) return 1;
+  return 2;
 }
