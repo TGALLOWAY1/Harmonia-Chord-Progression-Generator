@@ -2,7 +2,7 @@
 
 A minimal chord progression generator with a Scandinavian Minimalism aesthetic.
 
-<img width="1189" height="819" alt="image" src="https://github.com/user-attachments/assets/09480882-bc66-4fa4-a118-ba20fb31dba4" />
+<img width="1128" height="822" alt="image" src="https://github.com/user-attachments/assets/d16b472d-db67-4e51-bcb8-52cf215a0121" />
 
 
 ## Tech Stack
