@@ -1,4 +1,5 @@
 import { Chord as TonalChord, Interval, Note } from "@tonaljs/tonal";
+import { voiceChord, VoicedChord } from "@/src/audio/voicing";
 import {
   generateProgression as generateHarmonyProgression,
   Mode as HarmonyMode,
@@ -18,23 +19,53 @@ export type ChordObject = {
   roman: string;
 };
 
-export type VoicingStrategy = 'closed' | 'open' | 'drop2';
+export type VoicingStrategy = "closed" | "open" | "drop2";
 
 /**
  * Apply voicing strategy to a set of notes
  * 'open' (default): Keeps root, moves 3rd up an octave, keeps/moves 5th
  */
-export function applyVoicing(notes: string[], strategy: VoicingStrategy = 'open'): string[] {
+export function applyVoicing(
+  notes: string[],
+  strategy: VoicingStrategy = "open",
+  previousNotes?: string[]
+): string[] {
+  if (!notes.length) {
+    return [];
+  }
+
+  try {
+    const previous: VoicedChord | undefined = previousNotes
+      ? { notes: previousNotes }
+      : undefined;
+    const voiced = voiceChord(notes, previous);
+    if (!voiced.notes.length) {
+      throw new Error("voiceChord returned empty notes");
+    }
+    return voiced.notes;
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Harmonia] voiceChord failed, falling back to legacy voicing",
+        error
+      );
+    }
+    return legacyApplyVoicing(notes, strategy);
+  }
+}
+
+function legacyApplyVoicing(
+  notes: string[],
+  strategy: VoicingStrategy = "open"
+): string[] {
+  // Fallback path: identical to the original voicing logic while the new Mud Cut layer stabilizes.
   if (notes.length < 3) return notes;
-  
-  const pitchClasses = notes.map(n => Note.get(n).pc); // "C", "E", "G"
-  
-  if (strategy === 'closed') {
-    // Simple closed voicing: Root at C3, others immediately above
+
+  const pitchClasses = notes.map((n) => Note.get(n).pc);
+
+  if (strategy === "closed") {
     return pitchClasses.map((pc, i) => {
-      // Start at octave 3
       let octave = 3;
-      // If pitch class is 'lower' than root, bump octave
       if (i > 0) {
         const interval = Note.distance(pitchClasses[0] + octave, pc + octave);
         if (interval.startsWith("-")) octave++;
@@ -42,41 +73,38 @@ export function applyVoicing(notes: string[], strategy: VoicingStrategy = 'open'
       return pc + octave;
     });
   }
-  
-  if (strategy === 'open') {
-    const root = pitchClasses[0] + "3"; // Anchor root at octave 3
+
+  if (strategy === "open") {
+    const root = pitchClasses[0] + "3";
     const voicedNotes = [root];
-    
+
     for (let i = 1; i < pitchClasses.length; i++) {
       const pc = pitchClasses[i];
       let octave = 3;
-      
-      // Calculate base interval from root
+
       if (i === 1) {
-        // Move 3rd up one octave
         const baseNote = pc + "3";
         if (Note.distance(root, baseNote).startsWith("-")) {
-           octave = 5;
+          octave = 5;
         } else {
-           octave = 4;
+          octave = 4;
         }
       } else {
-        // 5th and 7th
-         const baseNote = pc + "3";
-         if (Note.distance(root, baseNote).startsWith("-")) {
-            octave = 4;
-         } else {
-            octave = 3;
-         }
+        const baseNote = pc + "3";
+        if (Note.distance(root, baseNote).startsWith("-")) {
+          octave = 4;
+        } else {
+          octave = 3;
+        }
       }
-      
+
       voicedNotes.push(pc + octave);
     }
-    
-    return voicedNotes.sort((a, b) => Note.midi(a)! - Note.midi(b)!);
+
+    return voicedNotes.sort((a, b) => (Note.midi(a) ?? 0) - (Note.midi(b) ?? 0));
   }
-  
-  return notes; // Fallback
+
+  return notes;
 }
 
 const SCALE_MODE_TO_ENGINE_MODE: Record<ScaleMode, HarmonyMode> = {
@@ -132,8 +160,8 @@ const ROMAN_INDEX: Record<string, number> = {
  * @param complexity Complexity level 0-3 (default: 1)
  */
 export function generateProgression(
-  root: string = "D", 
-  mode: ScaleMode = "minor", 
+  root: string = "D",
+  mode: ScaleMode = "minor",
   mood: Mood = "neutral",
   complexity: ComplexityLevel = 1
 ): ChordObject[] {
@@ -149,9 +177,21 @@ export function generateProgression(
     numChords: 4,
   });
 
-  return generated.map((generatedChord) =>
-    buildChordObject(root, harmonyMode, generatedChord)
-  );
+  const progression: ChordObject[] = [];
+  let previousNotes: string[] | undefined;
+
+  generated.forEach((generatedChord) => {
+    const chordObject = buildChordObject(
+      root,
+      harmonyMode,
+      generatedChord,
+      previousNotes
+    );
+    progression.push(chordObject);
+    previousNotes = chordObject.notes;
+  });
+
+  return progression;
 }
 
 export function generateDMinorProgression(mood: Mood = "neutral"): ChordObject[] {
@@ -161,12 +201,15 @@ export function generateDMinorProgression(mood: Mood = "neutral"): ChordObject[]
 function buildChordObject(
   root: string,
   harmonyMode: HarmonyMode,
-  generatedChord: GeneratedChord
+  generatedChord: GeneratedChord,
+  previousNotes?: string[]
 ): ChordObject {
   const chordSymbol = convertToChordSymbol(root, harmonyMode, generatedChord);
   const chord = TonalChord.get(chordSymbol);
   const chordNotes = chord.notes || [];
-  const voicedNotes = applyVoicing(chordNotes, "open");
+  // Symbolic chord → Tonal pitch classes → voiced via voiceChord (Mud Cut + voice-leading)
+  const previous = previousNotes && previousNotes.length ? previousNotes : undefined;
+  const voicedNotes = applyVoicing(chordNotes, "open", previous);
 
   return {
     symbol: chordSymbol,
