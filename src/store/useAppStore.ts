@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { Chord as TonalChord } from "@tonaljs/tonal";
 import { ChordObject, generateProgression, applyVoicing, Mood, ScaleMode, ComplexityLevel } from "@/src/lib/theory";
 
 interface AppState {
@@ -11,6 +10,8 @@ interface AppState {
   mood: Mood;
   rootNote: string;
   scaleMode: ScaleMode;
+  // NOTE: complexity is currently an alias for harmonic Depth (0–2) as defined in the Harmonia v2.1 spec:
+  // 0: triads, 1: diatonic 7ths, 2: atmospheric sus/add9.
   complexity: ComplexityLevel;
   lockedChords: boolean[];
 
